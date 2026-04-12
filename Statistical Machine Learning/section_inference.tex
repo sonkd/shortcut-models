@@ -1,0 +1,255 @@
+% ============================================================
+%  Section: Inference Investigation
+%  Paper: One Step Diffusion via Shortcut Models (Frans et al., ICLR 2025)
+%  Capstone: Statistical Machine Learning
+%  Author: Núi (tieunui)
+% ============================================================
+
+\section{Inference Investigation}
+\label{sec:inference}
+
+\subsection{Mục tiêu kiểm chứng}
+
+Thí nghiệm điều tra được thiết kế nhằm ba mục tiêu: (1)~kiểm chứng tính đúng đắn của mô hình Shortcut thông qua việc so sánh FID tương đối tại các mức ngân sách bước (\textit{Number of Function Evaluations}, NFE); (2)~xác nhận rằng \textit{shortcut conditioning} trên tham số $d$ là yếu tố cốt lõi của chất lượng sinh ảnh, thông qua một điều kiện ablation ngoài phân phối (\textit{out-of-distribution}); (3)~quan sát sự đánh đổi giữa tốc độ suy diễn và chất lượng ảnh trong một mô hình duy nhất.
+
+% ────────────────────────────────────────────────
+\subsection{Chỉ số FID và cơ chế tính toán}
+\label{sec:fid}
+
+Fréchet Inception Distance (FID)~\cite{heusel2017gans} là chỉ số chuẩn trong đánh giá mô hình sinh ảnh. Thay vì so sánh ảnh theo từng pixel, FID đo khoảng cách giữa hai phân phối Gaussian đa biến được ước lượng trong không gian đặc trưng của mạng Inception-v3~\cite{szegedy2016rethinking}, với chiều $D = 2048$.
+
+\paragraph{Công thức.}
+Gọi $(\mu_r, \Sigma_r)$ là thống kê đặc trưng Inception của tập ảnh tham chiếu (real hoặc reference) và $(\mu_g, \Sigma_g)$ là thống kê của tập ảnh sinh ra. FID được định nghĩa:
+
+\begin{equation}
+    \mathrm{FID} = \|\mu_r - \mu_g\|^2
+    + \mathrm{tr}\!\left(\Sigma_r + \Sigma_g
+      - 2\left(\Sigma_r \Sigma_g\right)^{1/2}\right)
+    \label{eq:fid}
+\end{equation}
+
+\noindent trong đó $\mathrm{tr}(\cdot)$ là vết ma trận và $(\Sigma_r \Sigma_g)^{1/2}$ là căn bậc hai ma trận tích. FID nhỏ hơn phản ánh phân phối ảnh sinh gần hơn với phân phối tham chiếu.
+
+\paragraph{Cấu trúc thống kê.}
+File \texttt{celeba256\_fidstats\_ours.npz} do tác giả cung cấp lưu trữ hai trường:
+\begin{itemize}
+    \item \texttt{mu}: vector trung bình đặc trưng, kích thước $(2048,)$, với $\bar{\mu} = 0.2774$;
+    \item \texttt{sigma}: ma trận hiệp phương sai, kích thước $(2048, 2048)$, với $\bar{\sigma} = 2.11 \times 10^{-3}$.
+\end{itemize}
+
+Giá trị $\bar{\sigma}$ nhỏ chỉ ra rằng các đặc trưng Inception trên CelebA-HQ tập trung chặt trong không gian $\mathbb{R}^{2048}$, phù hợp với đặc điểm của bộ dữ liệu khuôn mặt có cấu trúc cao.
+
+\paragraph{Phân biệt FID tuyệt đối và FID tương đối.}
+Bài báo gốc báo cáo FID-50k tuyệt đối (so sánh với phân phối ảnh thực), đo trên 50\,000 mẫu sinh và thống kê toàn bộ tập CelebA-HQ 256.
+Thí nghiệm trong báo cáo này sử dụng \textbf{FID tương đối}: mỗi cấu hình NFE được so sánh với mẫu 128-step của cùng checkpoint làm tham chiếu ($n = 504$ mỗi lượt). Đây là lựa chọn thực tế phù hợp với tài nguyên tính toán CPU hạn chế, và phản ánh sự suy giảm chất lượng khi giảm số bước suy diễn.
+
+% ────────────────────────────────────────────────
+\subsection{Thiết lập thí nghiệm}
+\label{sec:setup}
+
+\subsubsection{Môi trường và công cụ}
+
+Các thí nghiệm được thực hiện trong môi trường CPU-only trên macOS ARM (Apple Silicon), không có GPU hoặc TPU. Bảng~\ref{tab:env} tóm tắt các phiên bản thư viện được ghim cứng để đảm bảo khả năng tái hiện (\textit{reproducibility}).
+
+\begin{table}[h]
+\centering
+\caption{Phiên bản thư viện sử dụng trong thí nghiệm suy diễn.}
+\label{tab:env}
+\begin{tabular}{lll}
+\toprule
+\textbf{Thư viện} & \textbf{Phiên bản} & \textbf{Ghi chú} \\
+\midrule
+JAX / JAXlib     & 0.4.23 & Không tương thích với 0.7+ khi dùng Flax 0.7.4 \\
+Flax             & 0.7.4  & \\
+Optax            & 0.1.7  & \\
+Orbax-checkpoint & 0.4.8  & Phiên bản 0.11+ yêu cầu JAX $\geq$ 0.6.0 \\
+TensorFlow       & 2.21.0 & \texttt{tensorflow-cpu} không hỗ trợ Python 3.12 ARM \\
+pytorch-fid      & 0.3.0  & Tính FID tương đối, chạy trên CPU \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Mô hình và checkpoint}
+
+Mô hình sử dụng là \textbf{DiT-B}~\cite{peebles2023scalable} (\textit{Diffusion Transformer, Base}) với các siêu tham số:
+\begin{itemize}
+    \item \texttt{hidden\_size} = 768, \texttt{depth} = 12, \texttt{num\_heads} = 12, \texttt{patch\_size} = 2;
+    \item Không gian làm việc: latent $32 \times 32 \times 4$ (không phải pixel $256 \times 256 \times 3$);
+    \item VAE decoder: \texttt{pcuenq/sd-vae-ft-mse-flax} (tải từ HuggingFace);
+    \item Checkpoint: \texttt{celeba-shortcut2-every4400001} (bước huấn luyện 400\,000), tải từ kho lưu trữ của tác giả~\cite{Frans2025}.
+\end{itemize}
+
+\subsubsection{Quy trình sinh mẫu (Euler sampling)}
+
+Do repo gốc yêu cầu TFDS dataset builder tùy chỉnh (\texttt{kvfrans/tfds\_builders}) không có sẵn trong TFDS chuẩn, một script suy diễn độc lập được xây dựng để sinh nhiễu Gaussian trực tiếp. Quá trình sinh mẫu tuân theo Algorithm~2 của bài báo~\cite{Frans2025}:
+
+\begin{equation}
+    x \leftarrow x + s_\theta(x,\, t,\, d)\cdot d, \qquad
+    t \leftarrow t + d
+    \label{eq:euler}
+\end{equation}
+
+\noindent với $d = 1/M$ và $M$ là số bước suy diễn. \textit{Shortcut conditioning} được mã hóa qua:
+\begin{equation}
+    d_{\mathrm{flow}} = \lfloor \log_2 M \rfloor \in \mathbb{Z}_{\geq 0}
+    \label{eq:dtflow}
+\end{equation}
+
+\noindent phản ánh cấu trúc cây nhị phân trong bootstrapping target của quá trình huấn luyện.
+
+\subsubsection{Danh sách các run thí nghiệm}
+
+Tổng cộng 6 nhóm nhiệm vụ (\textit{TASK}) được thực hiện, tương ứng với 8 cấu hình NFE và 1 điều kiện ablation OOD. Mỗi cấu hình tạo $n = 504$ mẫu ($63 \times 8$ batch), cố định \texttt{random\_seed = 42} trừ khi có chỉ định khác.
+
+\begin{table}[h]
+\centering
+\caption{Danh sách các run suy diễn trên CelebA-HQ 256 (DiT-B, bước 400\,000).}
+\label{tab:runs}
+\begin{tabular}{lccl}
+\toprule
+\textbf{Cấu hình} & \textbf{NFE} & $d_{\mathrm{flow}}$ & \textbf{Mô tả} \\
+\midrule
+Shortcut (1-step)   & 1   & 0 & Sinh một bước duy nhất \\
+Shortcut (2-step)   & 2   & 1 & \\
+Shortcut (4-step)   & 4   & 2 & \\
+Shortcut (8-step)   & 8   & 3 & \\
+Shortcut (16-step)  & 16  & 4 & \\
+Shortcut (32-step)  & 32  & 5 & \\
+Shortcut (64-step)  & 64  & 6 & \\
+Shortcut (128-step) & 128 & 7 & \textbf{Tham chiếu} (reference) \\
+OOD baseline        & 128 & 0 (forced) & Shortcut model với conditioning $d=0$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ────────────────────────────────────────────────
+\subsection{Kết quả}
+\label{sec:results}
+
+\subsubsection{FID tương đối theo NFE}
+
+Bảng~\ref{tab:fid_relative} trình bày FID tương đối đo được (so với mẫu 128-step làm tham chiếu). Hình~\ref{fig:fid_nfe} minh họa xu hướng giảm đơn điệu của FID theo NFE trên thang log.
+
+\begin{table}[h]
+\centering
+\caption{FID tương đối theo số bước suy diễn (NFE) trên CelebA-HQ 256.
+Tham chiếu: 128-step, $n=504$. FID nhỏ hơn là tốt hơn.}
+\label{tab:fid_relative}
+\begin{tabular}{ccc}
+\toprule
+\textbf{NFE} & \textbf{FID tương đối} & \textbf{Ghi chú} \\
+\midrule
+1   & 0.2205 & \\
+2   & 0.2007 & \\
+4   & 0.1659 & $\dagger$ \\
+8   & 0.1321 & \\
+16  & 0.0925 & \\
+32  & 0.0522 & \\
+64  & 0.0182 & \\
+128 & ---    & \textit{reference} \\
+\midrule
+OOD ($d=0$, 128 steps) & 100.51 & Ablation ngoài phân phối \\
+\bottomrule
+\multicolumn{3}{l}{\footnotesize $\dagger$ NFE=4: FID = $0.2745 \pm 0.0811$ (mean $\pm$ std, 3 seeds: 42, 123, 2025).}
+\end{tabular}
+\end{table}
+
+\noindent Kết quả cho thấy FID giảm đơn điệu khi tăng NFE, với mức giảm lớn nhất xảy ra từ NFE=1 đến NFE=8. Từ NFE=16 trở lên, đường cong phẳng dần (\textit{diminishing returns}), phù hợp với kỳ vọng lý thuyết.
+
+\subsubsection{Ablation: OOD conditioning}
+
+Khi buộc $d = 0$ tại thời điểm suy diễn (trong khi mô hình được huấn luyện với $d \in (0,1]$), FID tương đối đạt $100.51$, tăng gấp $\sim$$455$ lần so với NFE=1 chính thức ($0.22$). Điều này xác nhận rằng \textit{shortcut conditioning} là thành phần không thể thiếu: khi mô hình nhận đầu vào ngoài phân phối huấn luyện, chất lượng sinh ảnh sụp đổ hoàn toàn.
+
+\textbf{Lưu ý diễn giải:} Điều kiện OOD này \emph{không} tương đương với một mô hình Flow Matching thuần túy. Đây là shortcut model hoạt động trong chế độ ngoài phân phối, và kết quả phản ánh \textit{distribution shift}, không phải so sánh trực tiếp giữa hai kiến trúc khác nhau.
+
+\subsubsection{Độ ổn định qua các seed}
+
+Tại NFE=4, thí nghiệm được lặp lại với 3 seed ngẫu nhiên:
+
+\begin{center}
+\begin{tabular}{cc}
+\toprule
+\textbf{Seed} & \textbf{FID tương đối} \\
+\midrule
+42   & 0.1659 \\
+123  & 0.2969 \\
+2025 & 0.3608 \\
+\midrule
+Mean $\pm$ Std & $0.2745 \pm 0.0811$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent Độ lệch chuẩn $\sigma = 0.081$ phản ánh phương sai không nhỏ khi $n = 504$ và số seed chỉ bằng 3. Giá trị này cần được hiểu là ước lượng thô của tính ổn định, không phải khoảng tin cậy thống kê chặt chẽ (đòi hỏi $n \geq 5$ seed và bootstrap resampling).
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.72\textwidth]{figures/fid_nfe_curve.png}
+    \caption{FID tương đối theo NFE (thang log cơ số 2) trên CelebA-HQ 256 (DiT-B).
+    Điểm OOD ($d=0$, FID $= 100.51$) được loại khỏi trục để duy trì khả năng đọc.
+    Đường cong xác nhận xu hướng giảm đơn điệu và \textit{diminishing returns} từ NFE $\geq$ 16.}
+    \label{fig:fid_nfe}
+\end{figure}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.85\textwidth]{figures/visual_grid_4x4.png}
+    \caption{Lưới ảnh $4\times4$ sinh từ cùng một vector nhiễu ban đầu với các mức NFE = \{1, 4, 16, 128\}.
+    Quan sát: NFE=1 cho ảnh mờ và artifact texture; NFE=4 cải thiện rõ cấu trúc khuôn mặt;
+    NFE=16 và NFE=128 cho chất lượng gần tương đương về mặt thị giác.}
+    \label{fig:visual_grid}
+\end{figure}
+
+% ────────────────────────────────────────────────
+\subsection{So sánh với kết quả của tác giả}
+\label{sec:comparison}
+
+Bảng~\ref{tab:comparison} đặt kết quả thí nghiệm này cạnh số liệu FID-50k tuyệt đối được tác giả báo cáo trong~\cite{Frans2025}. Cần lưu ý rằng hai chỉ số đo hai đại lượng \emph{khác nhau} và không thể so sánh trực tiếp theo giá trị số học.
+
+\begin{table}[h]
+\centering
+\caption{So sánh xu hướng FID giữa thí nghiệm điều tra và kết quả gốc (Frans et al., ICLR 2025)
+trên CelebA-HQ 256, kiến trúc DiT-B.}
+\label{tab:comparison}
+\begin{tabular}{lcccc}
+\toprule
+& \multicolumn{2}{c}{\textbf{Thí nghiệm điều tra (FID tương đối)}}
+& \multicolumn{2}{c}{\textbf{Tác giả (FID-50k, tuyệt đối)}} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+\textbf{NFE} & \textbf{Giá trị} & \textbf{Xu hướng}
+             & \textbf{Giá trị} & \textbf{Xu hướng} \\
+\midrule
+1   & 0.2205 & \multirow{3}{*}{$\downarrow$ giảm đơn điệu} & 20.5 & \multirow{3}{*}{$\downarrow$ giảm đơn điệu} \\
+4   & 0.1659 & & 13.8 & \\
+128 & ---\ (ref.) & & 6.9  & \\
+\midrule
+OOD ($d=0$) & 100.51 & $\uparrow\uparrow$ & --- & --- \\
+\bottomrule
+\multicolumn{5}{l}{\footnotesize FID tương đối: ref. = 128-step, $n=504$.
+FID-50k tuyệt đối: ref. = real CelebA-HQ 256, $n=50\,000$.}
+\end{tabular}
+\end{table}
+
+\noindent Mặc dù giá trị tuyệt đối khác nhau do phương pháp đo và quy mô mẫu, \textbf{xu hướng định tính hoàn toàn nhất quán}: FID giảm đơn điệu khi tăng NFE, và khoảng cách lớn nhất nằm ở vùng NFE thấp (1$\to$4). Kết quả này ủng hộ giả thuyết cốt lõi của Shortcut Models: một mạng duy nhất có thể cung cấp chất lượng sinh ảnh có thể điều chỉnh linh hoạt theo ngân sách tính toán.
+
+% ────────────────────────────────────────────────
+\subsection{Hạn chế của thí nghiệm}
+\label{sec:limitations}
+
+\paragraph{1. Phạm vi dataset.}
+Thí nghiệm chỉ được thực hiện trên CelebA-HQ 256. Kết quả không được kiểm chứng trên ImageNet-256 hay các dataset đa dạng hơn, do đó không thể đánh giá khả năng tổng quát hóa của mô hình trên phân phối dữ liệu phức tạp hơn.
+
+\paragraph{2. Quy mô mẫu và FID tương đối.}
+$n = 504$ mẫu nhỏ hơn 99 lần so với tiêu chuẩn FID-50k. FID tương đối (so với 128-step) không đo chất lượng tuyệt đối so với ảnh thực, chỉ phản ánh sự suy giảm chất lượng trong nội bộ mô hình khi giảm NFE.
+
+\paragraph{3. Phương sai seed.}
+Chỉ 3 seed được sử dụng, dẫn đến ước lượng $\sigma = 0.081$ kém tin cậy thống kê. Thực hành tốt yêu cầu tối thiểu 5 seed và bootstrap confidence interval.
+
+\paragraph{4. OOD baseline không phải FM model.}
+Điều kiện \texttt{force\_dt0} tạo ra một shortcut model trong chế độ ngoài phân phối, không phải một mô hình Flow Matching thuần túy được huấn luyện độc lập. Ablation đúng đắn đòi hỏi một checkpoint được huấn luyện với \texttt{--train\_type naive}.
+
+\paragraph{5. Hạ tầng tính toán.}
+Việc chạy trên CPU-only (macOS ARM) không có JIT acceleration (bỏ \texttt{@jax.jit} do OOM) dẫn đến thời gian suy diễn chậm hơn đáng kể so với môi trường TPU-v3 của tác giả, ảnh hưởng đến khả năng mở rộng quy mô mẫu.
+
+\paragraph{6. Không có FID tuyệt đối.}
+Thiếu bộ thống kê ảnh thực (\texttt{celeba256\_fidstats\_real}) để so sánh với phân phối thực, nên không thể xác nhận trực tiếp giá trị FID-50k = 6.9 (128-step) hay FID-50k = 20.5 (1-step) như tác giả báo cáo.

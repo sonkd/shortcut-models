@@ -1,0 +1,349 @@
+% ============================================================
+%  Section: Inference Investigation
+%  Paper: One Step Diffusion via Shortcut Models (Frans et al., ICLR 2025)
+%  Capstone: Statistical Machine Learning
+%  Author: Núi (tieunui)
+% ============================================================
+
+\section{Inference Investigation}
+\label{sec:inference}
+
+\subsection{Objectives}
+
+The inference investigation is designed with three objectives:
+(1)~validate the correctness of the Shortcut Model by comparing relative FID
+across a range of step budgets (\textit{Number of Function Evaluations}, NFE);
+(2)~confirm that \textit{shortcut conditioning} on parameter $d$ is the
+essential factor governing sample quality, via an out-of-distribution (OOD)
+ablation condition;
+(3)~characterize the trade-off between inference cost and image quality within a
+single unified model.
+
+% ────────────────────────────────────────────────
+\subsection{The FID Metric and Its Computation}
+\label{sec:fid}
+
+Fréchet Inception Distance (FID)~\cite{heusel2017gans} is the standard metric
+for evaluating generative image models.
+Rather than comparing images pixel-by-pixel, FID measures the distance between
+two multivariate Gaussian distributions fitted to feature activations extracted
+by Inception-v3~\cite{szegedy2016rethinking}, where the feature space has
+dimension $D = 2048$.
+
+\paragraph{Formula.}
+Let $(\mu_r, \Sigma_r)$ denote the Inception feature statistics of the
+reference image set (real data or a high-NFE proxy), and $(\mu_g, \Sigma_g)$
+those of the generated set. FID is defined as:
+
+\begin{equation}
+    \mathrm{FID} = \|\mu_r - \mu_g\|^2
+    + \mathrm{tr}\!\left(\Sigma_r + \Sigma_g
+      - 2\left(\Sigma_r \Sigma_g\right)^{1/2}\right)
+    \label{eq:fid}
+\end{equation}
+
+\noindent where $\mathrm{tr}(\cdot)$ denotes the matrix trace and
+$(\Sigma_r \Sigma_g)^{1/2}$ is the matrix square root of the product.
+A lower FID indicates that the generated distribution is closer to the
+reference distribution.
+
+\paragraph{Statistics structure.}
+The file \texttt{celeba256\_fidstats\_ours.npz} provided by the authors stores
+two arrays:
+\begin{itemize}
+    \item \texttt{mu}: mean feature vector of shape $(2048,)$,
+          with $\bar{\mu} = 0.2774$;
+    \item \texttt{sigma}: covariance matrix of shape $(2048, 2048)$,
+          with $\bar{\sigma} = 2.11 \times 10^{-3}$.
+\end{itemize}
+
+The small value of $\bar{\sigma}$ indicates that Inception features on
+CelebA-HQ are tightly clustered in $\mathbb{R}^{2048}$, consistent with the
+highly structured nature of a face dataset.
+
+\paragraph{Absolute vs.\ relative FID.}
+The original paper reports \emph{absolute} FID-50k (generated samples vs.\
+real CelebA-HQ 256 statistics, $n = 50\,000$).
+The experiments in this report use \textbf{relative FID}: each NFE
+configuration is compared against 128-step samples from the same checkpoint as
+a proxy reference ($n = 504$ per run).
+This is a practical choice given CPU-only compute constraints, and it measures
+how much quality degrades as NFE decreases, rather than absolute sample
+fidelity.
+
+% ────────────────────────────────────────────────
+\subsection{Experimental Setup}
+\label{sec:setup}
+
+\subsubsection{Environment and Libraries}
+
+All experiments were run on a CPU-only macOS ARM (Apple Silicon) machine
+without GPU or TPU acceleration.
+Table~\ref{tab:env} lists the pinned library versions used to ensure
+reproducibility.
+
+\begin{table}[h]
+\centering
+\caption{Library versions used in the inference experiments.}
+\label{tab:env}
+\begin{tabular}{lll}
+\toprule
+\textbf{Library} & \textbf{Version} & \textbf{Notes} \\
+\midrule
+JAX / JAXlib     & 0.4.23 & Incompatible with 0.7+ when using Flax 0.7.4 \\
+Flax             & 0.7.4  & \\
+Optax            & 0.1.7  & \\
+Orbax-checkpoint & 0.4.8  & v0.11+ requires JAX $\geq$ 0.6.0 \\
+TensorFlow       & 2.21.0 & \texttt{tensorflow-cpu} unavailable for Python 3.12 ARM \\
+pytorch-fid      & 0.3.0  & Relative FID computation, CPU-only \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Model and Checkpoint}
+
+The model used is \textbf{DiT-B}~\cite{peebles2023scalable}
+(\textit{Diffusion Transformer, Base}) with the following hyperparameters:
+\begin{itemize}
+    \item \texttt{hidden\_size} = 768, \texttt{depth} = 12,
+          \texttt{num\_heads} = 12, \texttt{patch\_size} = 2;
+    \item Working space: latent $32 \times 32 \times 4$
+          (not pixel space $256 \times 256 \times 3$);
+    \item VAE decoder: \texttt{pcuenq/sd-vae-ft-mse-flax}
+          (loaded from HuggingFace);
+    \item Checkpoint: \texttt{celeba-shortcut2-every4400001}
+          (training step 400\,000), downloaded from the authors'
+          repository~\cite{Frans2025}.
+\end{itemize}
+
+\subsubsection{Sampling Procedure (Euler Sampling)}
+
+The original repository requires a custom TFDS dataset builder
+(\texttt{kvfrans/tfds\_builders}) not available in standard TFDS.
+To avoid this dependency, a standalone inference script was developed that
+samples Gaussian noise directly, bypassing the dataset loader.
+The sampling loop follows Algorithm~2 of the paper~\cite{Frans2025}:
+
+\begin{equation}
+    x \leftarrow x + s_\theta(x,\, t,\, d)\cdot d, \qquad
+    t \leftarrow t + d
+    \label{eq:euler}
+\end{equation}
+
+\noindent where $d = 1/M$ and $M$ is the number of denoising steps.
+The shortcut conditioning signal is encoded as:
+
+\begin{equation}
+    d_{\mathrm{flow}} = \lfloor \log_2 M \rfloor \in \mathbb{Z}_{\geq 0}
+    \label{eq:dtflow}
+\end{equation}
+
+\noindent which reflects the binary-tree structure of the bootstrapping targets
+used during training.
+
+\subsubsection{Experiment Runs}
+
+A total of six task groups were executed, covering 8 NFE configurations and
+1 OOD ablation condition.
+Each configuration generates $n = 504$ samples ($63 \times 8$ batches)
+with \texttt{random\_seed = 42} unless otherwise specified.
+
+\begin{table}[h]
+\centering
+\caption{Inference runs on CelebA-HQ 256 (DiT-B, training step 400\,000).}
+\label{tab:runs}
+\begin{tabular}{lccl}
+\toprule
+\textbf{Configuration} & \textbf{NFE} & $d_{\mathrm{flow}}$ & \textbf{Description} \\
+\midrule
+Shortcut (1-step)   & 1   & 0 & Single-step generation \\
+Shortcut (2-step)   & 2   & 1 & \\
+Shortcut (4-step)   & 4   & 2 & \\
+Shortcut (8-step)   & 8   & 3 & \\
+Shortcut (16-step)  & 16  & 4 & \\
+Shortcut (32-step)  & 32  & 5 & \\
+Shortcut (64-step)  & 64  & 6 & \\
+Shortcut (128-step) & 128 & 7 & \textbf{Reference} \\
+OOD baseline        & 128 & 0 (forced) & Shortcut model with conditioning $d=0$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ────────────────────────────────────────────────
+\subsection{Results}
+\label{sec:results}
+
+\subsubsection{Relative FID vs.\ NFE}
+
+Table~\ref{tab:fid_relative} reports the relative FID measured against the
+128-step reference samples.
+Figure~\ref{fig:fid_nfe} illustrates the monotonically decreasing trend of FID
+as a function of NFE on a log scale.
+
+\begin{table}[h]
+\centering
+\caption{Relative FID by number of denoising steps (NFE) on CelebA-HQ 256.
+Reference: 128-step samples, $n=504$. Lower FID is better.}
+\label{tab:fid_relative}
+\begin{tabular}{ccc}
+\toprule
+\textbf{NFE} & \textbf{Relative FID} & \textbf{Notes} \\
+\midrule
+1   & 0.2205 & \\
+2   & 0.2007 & \\
+4   & 0.1659 & $\dagger$ \\
+8   & 0.1321 & \\
+16  & 0.0925 & \\
+32  & 0.0522 & \\
+64  & 0.0182 & \\
+128 & ---    & \textit{reference} \\
+\midrule
+OOD ($d=0$, 128 steps) & 100.51 & Out-of-distribution ablation \\
+\bottomrule
+\multicolumn{3}{l}{\footnotesize $\dagger$ NFE=4: FID = $0.2745 \pm 0.0811$
+  (mean $\pm$ std over 3 seeds: 42, 123, 2025).}
+\end{tabular}
+\end{table}
+
+\noindent The results show a monotonically decreasing FID as NFE increases,
+with the steepest drop occurring between NFE=1 and NFE=8.
+From NFE=16 onward, the curve flattens, exhibiting \textit{diminishing
+returns}, consistent with theoretical expectations.
+
+\subsubsection{Ablation: OOD Conditioning}
+
+When $d$ is forced to $0$ at inference time (while the model was trained with
+$d \in (0,1]$), the relative FID reaches $100.51$---approximately
+$455\times$ higher than the properly conditioned 1-step result ($0.22$).
+This confirms that shortcut conditioning is an indispensable component: once
+the model receives inputs outside its training distribution, sample quality
+collapses entirely.
+
+\textbf{Interpretive note:} This OOD condition is \emph{not} equivalent to a
+standalone Flow Matching model.
+It represents a shortcut model operating under distribution shift, and the
+result reflects a breakdown of the conditioning mechanism rather than a
+direct architectural comparison between two separately trained models.
+
+\subsubsection{Seed Stability}
+
+At NFE=4, the experiment was repeated with three random seeds:
+
+\begin{center}
+\begin{tabular}{cc}
+\toprule
+\textbf{Seed} & \textbf{Relative FID} \\
+\midrule
+42   & 0.1659 \\
+123  & 0.2969 \\
+2025 & 0.3608 \\
+\midrule
+Mean $\pm$ Std & $0.2745 \pm 0.0811$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent The standard deviation $\sigma = 0.081$ reflects non-negligible
+variance given $n = 504$ and only 3 seeds.
+This estimate should be interpreted as a rough stability indicator rather than
+a statistically tight confidence interval, which would require at least 5 seeds
+and bootstrap resampling.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.72\textwidth]{figures/fid_nfe_curve.png}
+    \caption{Relative FID vs.\ NFE (log base-2 scale) on CelebA-HQ 256 (DiT-B).
+    The OOD point ($d=0$, FID $= 100.51$) is excluded from the axis
+    to preserve readability.
+    The curve confirms a monotonically decreasing trend with diminishing
+    returns from NFE $\geq$ 16.}
+    \label{fig:fid_nfe}
+\end{figure}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.85\textwidth]{figures/visual_grid_4x4.png}
+    \caption{$4\times4$ image grid generated from the same initial noise vector
+    at NFE $\in \{1, 4, 16, 128\}$.
+    Observation: NFE=1 produces blurry images with visible texture artifacts;
+    NFE=4 substantially improves facial structure; NFE=16 and NFE=128
+    achieve visually near-equivalent quality.}
+    \label{fig:visual_grid}
+\end{figure}
+
+% ────────────────────────────────────────────────
+\subsection{Comparison with Authors' Results}
+\label{sec:comparison}
+
+Table~\ref{tab:comparison} places our experimental results alongside the
+absolute FID-50k values reported by Frans et al.~\cite{Frans2025}.
+It is important to note that the two metrics measure \emph{different
+quantities} and cannot be compared numerically.
+
+\begin{table}[h]
+\centering
+\caption{Qualitative FID trend comparison between this investigation and the
+original results (Frans et al., ICLR 2025) on CelebA-HQ 256, DiT-B.}
+\label{tab:comparison}
+\begin{tabular}{lcccc}
+\toprule
+& \multicolumn{2}{c}{\textbf{This Work (Relative FID)}}
+& \multicolumn{2}{c}{\textbf{Authors (FID-50k, Absolute)}} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+\textbf{NFE} & \textbf{Value} & \textbf{Trend}
+             & \textbf{Value} & \textbf{Trend} \\
+\midrule
+1   & 0.2205 & \multirow{3}{*}{$\downarrow$ monotone} & 20.5 & \multirow{3}{*}{$\downarrow$ monotone} \\
+4   & 0.1659 & & 13.8 & \\
+128 & ---\ (ref.) & & 6.9  & \\
+\midrule
+OOD ($d=0$) & 100.51 & $\uparrow\uparrow$ & --- & --- \\
+\bottomrule
+\multicolumn{5}{l}{\footnotesize Relative FID: ref.\ = 128-step samples, $n=504$.
+Absolute FID-50k: ref.\ = real CelebA-HQ 256, $n=50\,000$.}
+\end{tabular}
+\end{table}
+
+\noindent Despite the difference in absolute values arising from measurement
+methodology and sample scale, \textbf{the qualitative trend is fully
+consistent}: FID decreases monotonically with increasing NFE, and the largest
+quality gap occurs at low NFE (1$\to$4).
+This supports the core hypothesis of Shortcut Models: a single network can
+deliver flexibly adjustable sample quality within a fixed compute budget.
+
+% ────────────────────────────────────────────────
+\subsection{Limitations}
+\label{sec:limitations}
+
+\paragraph{1. Dataset scope.}
+Experiments were conducted solely on CelebA-HQ 256.
+Results were not validated on ImageNet-256 or more diverse datasets, so the
+model's generalization to more complex data distributions cannot be assessed.
+
+\paragraph{2. Sample size and relative FID.}
+$n = 504$ is $99\times$ smaller than the FID-50k standard.
+Relative FID (against 128-step samples) does not measure absolute fidelity
+against real images; it only captures within-model quality degradation as NFE
+decreases.
+
+\paragraph{3. Seed variance.}
+Only 3 seeds were used, making the estimate $\sigma = 0.081$ statistically
+unreliable.
+Best practice requires at least 5 seeds and bootstrap confidence intervals.
+
+\paragraph{4. OOD baseline is not a true FM model.}
+The \texttt{force\_dt0} condition produces a shortcut model operating under
+distribution shift, not a separately trained Flow Matching model.
+A proper ablation would require a checkpoint trained with
+\texttt{--train\_type naive}.
+
+\paragraph{5. Compute infrastructure.}
+Running on CPU-only macOS ARM without JIT acceleration
+(\texttt{@jax.jit} disabled due to OOM) results in substantially slower
+inference compared to the authors' TPU-v3 environment, limiting the feasibility
+of scaling to larger sample sizes.
+
+\paragraph{6. No absolute FID.}
+The absence of real-image statistics (\texttt{celeba256\_fidstats\_real})
+means it is not possible to directly confirm the authors' reported values of
+FID-50k $= 6.9$ at 128-step or FID-50k $= 20.5$ at 1-step.

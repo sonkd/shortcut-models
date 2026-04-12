@@ -1,0 +1,143 @@
+% ============================================================
+%  Appendix: Inference Investigation Pipeline
+%  Paper: One Step Diffusion via Shortcut Models (Frans et al., ICLR 2025)
+%  Capstone: Statistical Machine Learning
+% ============================================================
+
+\section{Inference Investigation Pipeline}
+\label{appendix:pipeline}
+
+Table~\ref{tab:pipeline} documents the end-to-end inference pipeline
+executed to verify the Shortcut Model on CelebA-HQ 256.
+Each stage lists its inputs, outputs, key tools, and the corresponding
+experiment task identifier from the investigation log.
+
+\begin{table}[h]
+\centering
+\renewcommand{\arraystretch}{1.45}
+\caption{End-to-end inference investigation pipeline (CelebA-HQ 256, DiT-B).}
+\label{tab:pipeline}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{clllll}
+\toprule
+\textbf{Stage} & \textbf{Step} & \textbf{Input} & \textbf{Output} & \textbf{Tool / Command} & \textbf{Task} \\
+\midrule
+
+\multirow{4}{*}{\textbf{0. Setup}}
+  & Install dependencies
+    & \texttt{requirements.txt}
+    & Virtual environment (\texttt{.venv})
+    & \texttt{pip install jax==0.4.23 flax==0.7.4 ...}
+    & — \\
+  & Download checkpoint
+    & Google Drive URL
+    & \texttt{celeba-shortcut2-every4400001/} ($\sim$2\,GB)
+    & Browser / \texttt{gdown}
+    & — \\
+  & Verify FID stats
+    & \texttt{celeba256\_fidstats\_ours.npz}
+    & \texttt{mu} $(2048,)$,\ \texttt{sigma} $(2048,2048)$
+    & \texttt{check\_fidstat.py}
+    & — \\
+  & Verify JAX device
+    & —
+    & \texttt{[CpuDevice(id=0)]}
+    & \texttt{python -c "import jax; print(jax.devices())"}
+    & — \\
+
+\midrule
+\multirow{3}{*}{\makecell{\textbf{1. Sample}\\\textbf{Generation}}}
+  & NFE sweep $\in \{1,2,4,8,16,32,64,128\}$
+    & Gaussian noise $\mathcal{N}(0,I)$,\ checkpoint
+    & 504 PNG per config (63 batches $\times$ 8)
+    & \texttt{run\_inference\_standalone.py --num\_steps \{NFE\}}
+    & TASK-01 \\
+  & Shortcut conditioning
+    & $M$ (NFE)
+    & $d_\text{flow} = \lfloor \log_2 M \rfloor$
+    & Euler loop: $x \leftarrow x + s_\theta(x,t,d)\cdot d$
+    & TASK-01 \\
+  & OOD baseline
+    & Same checkpoint, $d=0$ (forced)
+    & 504 PNG (\texttt{celeba\_ood\_d0\_n504/})
+    & \texttt{run\_inference\_standalone.py --force\_dt0}
+    & TASK-04 \\
+
+\midrule
+\multirow{3}{*}{\makecell{\textbf{2. FID}\\\textbf{Computation}}}
+  & Extract Inception features
+    & PNG directory ($n=504$)
+    & Activation matrix $(504, 192)$
+    & \texttt{pytorch\_fid.InceptionV3}, \texttt{dims=192}
+    & TASK-02 \\
+  & Compute relative FID
+    & Gen.\ features vs.\ 128-step ref.\ features
+    & Scalar FID per config (Table~\ref{tab:fid_relative})
+    & \texttt{compute\_fid.py --ref celeba\_128step\_n504}
+    & TASK-02 \\
+  & Seed stability (NFE=4)
+    & Seeds $\{42,\,123,\,2025\}$
+    & FID mean $\pm$ std $= 0.2745 \pm 0.0811$
+    & Re-run TASK-01 $\times 3$, compute variance
+    & TASK-03 \\
+
+\midrule
+\multirow{2}{*}{\makecell{\textbf{3. Analysis}\\\textbf{\& Plotting}}}
+  & FID vs.\ NFE curve
+    & \texttt{fid\_results.json}
+    & \texttt{fid\_nfe\_curve.png} (Figure~\ref{fig:fid_nfe})
+    & \texttt{plot\_fid\_nfe.py} (matplotlib, log$_2$ x-axis)
+    & TASK-02 \\
+  & Visual quality grid
+    & Fixed noise seed, NFE $\in \{1,4,16,128\}$
+    & \texttt{visual\_grid\_4x4.png} (Figure~\ref{fig:visual_grid})
+    & \texttt{run\_visual\_grid.py}
+    & TASK-06 \\
+
+\midrule
+\multirow{3}{*}{\makecell{\textbf{4. Validation}\\\textbf{\& Caveats}}}
+  & OOD result check
+    & \texttt{celeba\_ood\_d0\_n504/} vs.\ 128-step ref.
+    & FID $= 100.51$ (distribution collapse confirmed)
+    & \texttt{compute\_fid.py}
+    & TASK-04 \\
+  & Qualitative artifact review
+    & Visual grid (Figure~\ref{fig:visual_grid})
+    & Artifact taxonomy per NFE level
+    & Manual inspection
+    & TASK-06 \\
+  & Baseline clarification
+    & \texttt{force\_dt0} design decision
+    & OOD condition $\neq$ standalone FM model
+    & Code review of \texttt{run\_inference\_standalone.py}
+    & TASK-04 \\
+
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\paragraph{Key design decisions.}
+Three engineering decisions required deviation from the original repository:
+\begin{enumerate}
+    \item \textbf{Standalone inference script.}
+          The original \texttt{train.py --mode inference} depends on a
+          custom TFDS builder (\texttt{kvfrans/tfds\_builders}).
+          A self-contained script was written to sample Gaussian noise
+          directly, removing the dataset dependency.
+    \item \textbf{No JIT compilation.}
+          \texttt{@jax.jit} was disabled on CPU-only hardware due to
+          out-of-memory (OOM, exit code 137) during XLA compilation of
+          DiT-B. Eager mode was used instead.
+    \item \textbf{Reduced Inception feature dimension.}
+          \texttt{pytorch-fid} was run with \texttt{dims=192} instead of
+          the standard $2048$ to reduce compute time on CPU.
+          This produces \emph{relative} FID values that are not directly
+          comparable to the absolute FID-50k reported by the authors.
+\end{enumerate}
+
+\paragraph{Reproducibility.}
+All scripts, pinned package versions, and \texttt{fid\_results.json} are
+available at \texttt{study-zone/} within the repository fork.
+Random seed is fixed to \texttt{42} for all single-seed runs;
+seed variance analysis uses seeds $\{42,\,123,\,2025\}$.

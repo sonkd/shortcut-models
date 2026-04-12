@@ -1,0 +1,75 @@
+{
+  "celeba_16step_n504": {
+    "fid": 0.0925,
+    "nfe": 16,
+    "label": "Shortcut (NFE=16)",
+    "n_gen": 504,
+    "ref": "celeba_128step_n504"
+  },
+  "celeba_1step_n504": {
+    "fid": 0.2205,
+    "nfe": 1,
+    "label": "Shortcut (NFE=1)",
+    "n_gen": 504,
+    "ref": "celeba_128step_n504"
+  },
+  "celeba_2step_n504": {
+    "fid": 0.2007,
+    "nfe": 2,
+    "label": "Shortcut (NFE=2)",
+    "n_gen": 504,
+    "ref": "celeba_128step_n504"
+  },
+  "celeba_32step_n504": {
+    "fid": 0.0522,
+    "nfe": 32,
+    "label": "Shortcut (NFE=32)",
+    "n_gen": 504,
+    "ref": "celeba_128step_n504"
+  },
+  "celeba_4step_n504": {
+    "fid": 0.1659,
+    "nfe": 4,
+    "label": "Shortcut (NFE=4)",
+    "n_gen": 504,
+    "ref": "celeba_128step_n504"
+  },
+  "celeba_64step_n504": {
+    "fid": 0.0182,
+    "nfe": 64,
+    "label": "Shortcut (NFE=64)",
+    "n_gen": 504,
+    "ref": "celeba_128step_n504"
+  },
+  "celeba_8step_n504": {
+    "fid": 0.1321,
+    "nfe": 8,
+    "label": "Shortcut (NFE=8)",
+    "n_gen": 504,
+    "ref": "celeba_128step_n504"
+  },
+  "celeba_ood_d0_n504": {
+    "fid": 100.5077,
+    "nfe": null,
+    "label": "Shortcut, OOD cond. d=0 (NFE=128)",
+    "n_gen": 504,
+    "ref": "celeba_128step_n504"
+  },
+  "celeba_4step_seed_stats": {
+    "fid_mean": 0.2745,
+    "fid_std": 0.0811,
+    "seeds": [
+      42,
+      123,
+      2025
+    ],
+    "seed_fids": [
+      0.1659,
+      0.2969,
+      0.3608
+    ],
+    "nfe": 4,
+    "label": "Shortcut (NFE=4, mean\u00b1std over 3 seeds)",
+    "ref": "celeba_128step_n504"
+  }
+}

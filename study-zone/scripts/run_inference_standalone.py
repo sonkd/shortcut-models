@@ -32,6 +32,8 @@ def parse_args():
     p.add_argument('--num_steps', type=int, default=1)
     p.add_argument('--batch_size', type=int, default=16)
     p.add_argument('--save_dir', default='study-zone/samples/output')
+    p.add_argument('--num_batches', type=int, default=1,
+                   help='Number of batches to generate (total samples = batch_size × num_batches)')
     # CelebA DiT-B defaults — model runs in VAE latent space (32x32x4)
     p.add_argument('--hidden_size', type=int, default=768)
     p.add_argument('--patch_size', type=int, default=2)
@@ -90,14 +92,9 @@ def main():
     train_state = train_state.replace(**ts_dict)
     print(f"Loaded checkpoint, step={train_state.step}")
 
-    # ── Inference (Euler sampling) ────────────────────────────────
-    # Note: jax.jit disabled — on CPU JIT compilation of DiT-B 256x256 is very memory heavy
+    # ── Setup sampling constants ──────────────────────────────────
     def call_model(params, x, t, dt, labels):
         return model.apply({'params': params}, x, t, dt, labels, train=False)
-
-    rng, noise_rng = jax.random.split(rng)
-    x = jax.random.normal(noise_rng, (args.batch_size, args.image_size, args.image_size, args.image_channels))
-    labels = jnp.ones((args.batch_size,), dtype=jnp.int32) * args.num_classes  # null token
 
     denoise_timesteps = args.num_steps
     delta_t = 1.0 / denoise_timesteps
@@ -107,48 +104,48 @@ def main():
     else:
         dt_flow = int(np.log2(denoise_timesteps)) if denoise_timesteps > 1 else 0
     dt_base = jnp.ones((args.batch_size,), dtype=jnp.int32) * dt_flow
+    labels = jnp.ones((args.batch_size,), dtype=jnp.int32) * args.num_classes  # null token
 
+    total_samples = args.batch_size * args.num_batches
     print(f"Running {denoise_timesteps}-step Euler sampling...")
-    for ti in range(denoise_timesteps):
-        t_val = ti / denoise_timesteps
-        t_vec = jnp.full((args.batch_size,), t_val)
-        v = call_model(train_state.params_ema, x, t_vec, dt_base, labels)
-        x = x + v * delta_t
-        if (ti + 1) % max(1, denoise_timesteps // 4) == 0:
-            print(f"  step {ti+1}/{denoise_timesteps}")
+    print(f"Batches: {args.num_batches} × batch_size {args.batch_size} = {total_samples} samples total")
 
-    # ── Decode VAE latent → pixel image ──────────────────────────
+    # ── Load VAE once before batch loop ──────────────────────────
     if args.decode_vae:
         from utils.stable_vae import StableVAE
         print("Loading StableVAE decoder...")
         vae = StableVAE.create()
         vae_decode = jax.jit(vae.decode)
-        x_pixel = vae_decode(x)  # → (batch, 256, 256, 3) in [-1, 1]
-        x_np = np.array(x_pixel)
-    else:
-        # Show latent stats without decode
-        x_np = np.array(x)
-        print(f"Latent range: [{x_np.min():.2f}, {x_np.max():.2f}]")
 
-    # ── Save images ───────────────────────────────────────────────
-    x_np = np.clip(x_np * 0.5 + 0.5, 0, 1)  # [-1,1] → [0,1]
-    x_np = (x_np * 255).astype(np.uint8)
+    # ── Batch loop ────────────────────────────────────────────────
+    global_idx = 0
+    for batch_idx in range(args.num_batches):
+        rng, noise_rng = jax.random.split(rng)
+        x = jax.random.normal(noise_rng, (args.batch_size, args.image_size, args.image_size, args.image_channels))
 
-    # Save individual images
-    for i, img in enumerate(x_np):
-        imageio.imwrite(os.path.join(args.save_dir, f'sample_{i:03d}.png'), img)
+        for ti in range(denoise_timesteps):
+            t_val = ti / denoise_timesteps
+            t_vec = jnp.full((args.batch_size,), t_val)
+            v = call_model(train_state.params_ema, x, t_vec, dt_base, labels)
+            x = x + v * delta_t
 
-    # Save grid
-    n = int(np.ceil(np.sqrt(args.batch_size)))
-    h, w = x_np.shape[1], x_np.shape[2]  # actual pixel size after VAE decode
-    grid = np.zeros((n * h, n * w, x_np.shape[3]), dtype=np.uint8)
-    for i, img in enumerate(x_np[:n*n]):
-        r, c = divmod(i, n)
-        grid[r*h:(r+1)*h, c*w:(c+1)*w] = img
-    imageio.imwrite(os.path.join(args.save_dir, 'grid.png'), grid)
+        # Decode
+        if args.decode_vae:
+            x_pixel = vae_decode(x)  # → (batch, 256, 256, 3) in [-1, 1]
+            x_np = np.array(x_pixel)
+        else:
+            x_np = np.array(x)
 
-    print(f"\nDone! Saved {len(x_np)} images to: {args.save_dir}")
-    print(f"Grid saved: {args.save_dir}/grid.png")
+        x_np = np.clip(x_np * 0.5 + 0.5, 0, 1)
+        x_np = (x_np * 255).astype(np.uint8)
+
+        for img in x_np:
+            imageio.imwrite(os.path.join(args.save_dir, f'sample_{global_idx:05d}.png'), img)
+            global_idx += 1
+
+        print(f"  batch {batch_idx+1}/{args.num_batches} — saved {global_idx}/{total_samples} images")
+
+    print(f"\nDone! Saved {global_idx} images to: {args.save_dir}")
 
 
 if __name__ == '__main__':
