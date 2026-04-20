@@ -1,0 +1,234 @@
+% ============================================================
+%  General Mathematical Notation Table
+%  Paper: One Step Diffusion via Shortcut Models (Frans et al., ICLR 2025)
+%  Capstone: Statistical Machine Learning
+% ============================================================
+
+\section*{General Mathematical Notation}
+\addcontentsline{toc}{section}{General Mathematical Notation}
+\label{sec:notation}
+
+The following table collects all symbols and operators used throughout this
+report, organized by category.
+
+\renewcommand{\arraystretch}{1.5}
+
+% ── 1. Data and Distributions ────────────────────────────────────────────────
+\begin{table}[h]
+\centering
+\caption*{\textbf{Table N1.} Data and Distributions}
+\begin{tabular}{@{} c p{10cm} @{}}
+\toprule
+\textbf{Symbol} & \textbf{Definition} \\
+\midrule
+$x_0$
+  & Clean (real) data sample drawn from the data distribution;
+    $x_0 \sim D$. \\
+$x_1$
+  & Pure Gaussian noise sample;
+    $x_1 \sim \mathcal{N}(0, I)$ (the ``noisy'' endpoint in flow-matching
+    convention where $t=1$ is full noise). \\
+$x_t$
+  & Interpolated (noisy) data point at noise level $t$, defined by the
+    linear interpolation:
+    $x_t = (1-t)\,x_0 + t\,x_1$,\quad $t \in [0,1]$. \\
+$\varepsilon$
+  & Standard Gaussian noise; $\varepsilon \sim \mathcal{N}(0, I)$. \\
+$D$
+  & Training dataset (e.g.\ CelebA-HQ 256 or ImageNet-256). \\
+$p_{\mathrm{data}}$
+  & True data distribution; $x_0 \sim p_{\mathrm{data}}$. \\
+$p_t$
+  & Marginal distribution of $x_t$ at noise level $t$. \\
+$p(d,\,t)$
+  & Joint sampling distribution over step size $d$ and noise level $t$
+    used during training. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ── 2. Time and Step Variables ───────────────────────────────────────────────
+\begin{table}[h]
+\centering
+\caption*{\textbf{Table N2.} Time and Step Variables}
+\begin{tabular}{@{} c p{10cm} @{}}
+\toprule
+\textbf{Symbol} & \textbf{Definition} \\
+\midrule
+$t \in [0,1]$
+  & Continuous noise level (timestep).
+    $t=0$: clean data; $t=1$: pure noise. \\
+$d \in [0,1]$
+  & Step size (\textit{shortcut conditioning parameter}).
+    Controls the length of the denoising ``jump'' from $x_t$ to
+    $x_{t-d}$ in a single forward pass.
+    $d=0$ recovers the standard flow-matching velocity target. \\
+$M$
+  & Total number of denoising steps at inference
+    (Number of Function Evaluations, NFE). \\
+$n \in \{0,\ldots,M-1\}$
+  & Inference step index. \\
+$\Delta t = 1/M$
+  & Uniform step increment; $d = \Delta t$ in the Euler sampling loop. \\
+$d_{\mathrm{flow}}$
+  & Integer encoding of step size used as conditioning input to the
+    network:
+    $d_{\mathrm{flow}} = \lfloor \log_2 M \rfloor \in \mathbb{Z}_{\geq 0}$.
+    Reflects the binary-tree depth of the bootstrapping target
+    construction. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ── 3. Model and Parameters ──────────────────────────────────────────────────
+\begin{table}[h]
+\centering
+\caption*{\textbf{Table N3.} Model and Parameters}
+\begin{tabular}{@{} c p{10cm} @{}}
+\toprule
+\textbf{Symbol} & \textbf{Definition} \\
+\midrule
+$\theta$
+  & Learnable parameters of the Shortcut network. \\
+$s_\theta(x,\,t,\,d)$
+  & Shortcut network: maps a noisy state $x$ at noise level $t$ and
+    step size $d$ to a predicted velocity (direction and magnitude of
+    the denoising step). \\
+$F_\theta(x_t,\,t,\,d)$
+  & Equivalent shortcut mapping notation;
+    $F_\theta(x_t, t, d) \approx x_{t-d}$ (predicted state after one
+    shortcut step of size $d$). \\
+$v_t$
+  & Ground-truth velocity target in Conditional Flow Matching:
+    $v_t = \frac{dx_t}{dt} = x_1 - x_0$. \\
+$s_t$
+  & Predicted velocity at the current state: $s_t = s_\theta(x_t, t, d)$. \\
+$s_{t+d}$
+  & Predicted velocity after one small step:
+    $s_{t+d} = s_\theta(x_{t+d},\, t+d,\, d)$. \\
+$s_{\mathrm{target}}$
+  & Training regression target; set to $v_t$ (flow-matching elements)
+    or $\mathrm{stopgrad}(s_t + s_{t+d})/2$ (shortcut elements). \\
+$\mathrm{stopgrad}[\cdot]$
+  & Stop-gradient operator: treats its argument as a constant during
+    backpropagation; prevents bootstrapping collapse. \\
+$\lambda$
+  & Scalar loss weighting coefficient balancing the flow-matching
+    and shortcut consistency objectives. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ── 4. Training Objectives ───────────────────────────────────────────────────
+\begin{table}[h]
+\centering
+\caption*{\textbf{Table N4.} Training Objectives}
+\begin{tabular}{@{} c p{10cm} @{}}
+\toprule
+\textbf{Symbol} & \textbf{Definition} \\
+\midrule
+$\mathcal{L}_{\mathrm{flow}}$
+  & Flow-matching loss (applied to the first $k$ batch elements,
+    where $d \leftarrow 0$):
+    \[
+      \mathcal{L}_{\mathrm{flow}}
+        = \mathbb{E}_{t,\,x_0,\,\varepsilon}
+          \bigl[\|s_\theta(x_t,\,t,\,0) - v_t\|^2\bigr].
+    \] \\
+$\mathcal{L}_{\mathrm{shortcut}}$
+  & Self-consistency loss (applied to remaining batch elements):
+    \[
+      \mathcal{L}_{\mathrm{shortcut}}
+        = \mathbb{E}_{t,\,d,\,x_0,\,\varepsilon}
+          \Bigl[\bigl\|s_\theta(x_t,\,t,\,2d)
+            - \mathrm{stopgrad}
+              \tfrac{s_t + s_{t+d}}{2}\bigr\|^2\Bigr].
+    \] \\
+$\mathcal{L}$
+  & Combined training loss:
+    $\mathcal{L} = \mathcal{L}_{\mathrm{flow}}
+                 + \lambda\,\mathcal{L}_{\mathrm{shortcut}}$. \\
+$\nabla_\theta$
+  & Gradient with respect to network parameters $\theta$. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ── 5. Inference (Sampling) ──────────────────────────────────────────────────
+\begin{table}[h]
+\centering
+\caption*{\textbf{Table N5.} Inference (Sampling)}
+\begin{tabular}{@{} c p{10cm} @{}}
+\toprule
+\textbf{Symbol} & \textbf{Definition} \\
+\midrule
+$x \sim \mathcal{N}(0,I)$
+  & Initial noise sample at $t=0$ (start of the reverse process). \\
+$x \leftarrow x + s_\theta(x,\,t,\,d)\cdot d$
+  & Euler update rule: advances the state by one step of size $d$
+    along the predicted velocity field (Algorithm 2 of the paper). \\
+$\mathrm{NFE}$
+  & Number of Function Evaluations: total number of network forward
+    passes used during one sampling trajectory
+    ($\mathrm{NFE} = M$). \\
+$\mathrm{EMA}$
+  & Exponential Moving Average of network parameters used to
+    stabilize training; inference always uses EMA weights. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ── 6. Evaluation Metric (FID) ───────────────────────────────────────────────
+\begin{table}[h]
+\centering
+\caption*{\textbf{Table N6.} Evaluation Metric — Fréchet Inception Distance}
+\begin{tabular}{@{} c p{10cm} @{}}
+\toprule
+\textbf{Symbol} & \textbf{Definition} \\
+\midrule
+$\mathrm{FID}$
+  & Fréchet Inception Distance: scalar measure of distributional
+    similarity between generated and reference images
+    (lower is better). \\
+$D_{\mathrm{inc}} = 2048$
+  & Dimensionality of the Inception-v3 feature space used for FID
+    computation. \\
+$\mu_r,\,\Sigma_r$
+  & Mean vector and covariance matrix of Inception features extracted
+    from the \emph{reference} image set
+    ($\mu_r \in \mathbb{R}^{2048}$,\
+     $\Sigma_r \in \mathbb{R}^{2048 \times 2048}$). \\
+$\mu_g,\,\Sigma_g$
+  & Mean vector and covariance matrix of Inception features extracted
+    from the \emph{generated} image set. \\
+$\mathrm{FID}(\cdot\|\cdot)$
+  & FID formula:
+    \[
+      \mathrm{FID}
+        = \|\mu_r - \mu_g\|^2
+          + \mathrm{tr}\!\Bigl(
+              \Sigma_r + \Sigma_g
+              - 2\bigl(\Sigma_r\Sigma_g\bigr)^{1/2}
+            \Bigr).
+    \] \\
+$\mathrm{tr}(\cdot)$
+  & Matrix trace operator: sum of diagonal elements. \\
+$(\Sigma_r\Sigma_g)^{1/2}$
+  & Matrix square root of the product $\Sigma_r\Sigma_g$;
+    computed via eigendecomposition. \\
+$\mathrm{FID}\text{-}50\mathrm{k}$
+  & Standard absolute FID computed over 50\,000 generated samples
+    against real dataset statistics (used by the original paper). \\
+$\mathrm{FID}_{\mathrm{rel}}$
+  & Relative FID used in this investigation: generated samples
+    ($\mathrm{NFE} \in \{1,\ldots,64\}$, $n=504$) are compared
+    against 128-step shortcut samples as a proxy reference,
+    rather than against real data. \\
+$n$
+  & Number of generated samples used per FID evaluation
+    ($n = 504$ in this work; $n = 50\,000$ in the original paper). \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\renewcommand{\arraystretch}{1}  % reset to default after notation tables
