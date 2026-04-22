@@ -52,7 +52,7 @@ pip install tensorflow einops ml-collections diffusers transformers typeguard im
 
 Download từ Google Drive: `https://drive.google.com/drive/folders/1g665i0vMxm8qqqcp5mAiexnL919-gMwW`
 
-Đặt tại: `study-zone/checkpoints/celeba-shortcut2-every4400001`  
+Lưu tại: `study-zone/checkpoints/celeba-shortcut2-every4400001`  
 Kích thước: ~2 GB, format pickle (không phải orbax).
 
 ---
@@ -96,7 +96,7 @@ for ti in range(denoise_timesteps):
     x = x + v * delta_t
 ```
 
-`dt_flow = log2(steps)` là shortcut conditioning — cho model biết đang dùng bước nhảy bao lớn.
+`dt_flow = log2(steps)` là shortcut conditioning — cho model biết đang dùng bước nhảy lớn.
 
 ### 3.4 VAE decode
 
@@ -108,17 +108,17 @@ x_np = np.clip(x_np * 0.5 + 0.5, 0, 1)  # → [0, 1]
 
 ---
 
-## 4. Các sửa đổi và lưu ý trong quá trình điều tra
+## 4. Các sửa đổi và lưu ý trong quá trình inference
 
 ### 4.1 Lỗi JAX version conflict
 
-**Triệu chứng:** `AttributeError: module 'jax.core' has no attribute 'Shape'`  
+**Error:** `AttributeError: module 'jax.core' has no attribute 'Shape'`  
 **Nguyên nhân:** Cài JAX 0.7.x, không tương thích với flax 0.7.4 và optax 0.1.7.  
 **Fix:** Downgrade `jax==0.4.23` + `jaxlib==0.4.23`.
 
 ### 4.2 Lỗi orbax-checkpoint version
 
-**Triệu chứng:** `ImportError: cannot import name 'DeviceLocalLayout'`  
+**Error:** `ImportError: cannot import name 'DeviceLocalLayout'`  
 **Nguyên nhân:** orbax-checkpoint 0.11.x yêu cầu JAX ≥0.6.0.  
 **Fix:** Downgrade `orbax-checkpoint==0.4.8`.
 
@@ -128,14 +128,14 @@ x_np = np.clip(x_np * 0.5 + 0.5, 0, 1)  # → [0, 1]
 **Đúng:** `TrainStateEma.create(model, params, init_rng)`  
 **Lý do:** Signature là `(cls, model_def, params, rng, ...)` — truyền object `model`, không phải `model.apply`.
 
-### 4.4 OOM khi dùng jax.jit trên CPU
+### 4.4 Out-of-memory khi dùng jax.jit trên CPU
 
-**Triệu chứng:** Process bị kill (exit 137) khi compile JIT DiT-B.  
+**Error:** Process bị kill (exit 137) khi compile JIT DiT-B.  
 **Fix:** Bỏ `@jax.jit`, chạy eager mode. Chậm hơn nhưng không OOM.
 
 ### 4.5 Grid save sai kích thước
 
-**Triệu chứng:** `ValueError: could not broadcast shape (256,256,3) into (32,32,3)`  
+**Error:** `ValueError: could not broadcast shape (256,256,3) into (32,32,3)`  
 **Nguyên nhân:** Dùng `args.image_size=32` (latent dims) cho grid, nhưng sau VAE decode ảnh là 256×256.  
 **Fix:**
 ```python
@@ -147,9 +147,9 @@ grid = np.zeros((n * h, n * w, x_np.shape[3]), dtype=np.uint8)
 
 **Fix:** Cài `tensorflow` (full package, 2.21.0) thay vì `tensorflow-cpu`.
 
-### 4.7 Không gian latent vs pixel
+### 4.7 latent space vs pixel
 
-Phát hiện quan trọng: model hoạt động ở `32×32×4` (latent), không phải `256×256×3` (pixel).  
+Key insight: model hoạt động ở `32×32×4` (latent), không phải `256×256×3` (pixel).  
 Cần khởi tạo:
 ```python
 obs_shape = (1, 32, 32, 4)   # latent
@@ -189,7 +189,7 @@ Mỗi run: `batch_size=4`, seed=42, checkpoint `celeba-shortcut2-every4400001` (
 
 ### 6.2 Nhận xét chất lượng
 
-- **1-step:** Ảnh mờ, artifact rõ, khuôn mặt nhận ra được nhưng không sắc nét
+- **1-step:** Ảnh mờ, artifact rõ, khuôn mặt nhận ra được nhưng không sắc nét (team tự test bằng trực giác/survey)
 - **4-step:** Cải thiện đáng kể — texture da, tóc rõ hơn
 - **128-step (shortcut):** Chất lượng tốt nhất, gương mặt sắc nét, màu sắc tự nhiên
 - **128-step (FM baseline, dt=0):** Chất lượng thấp hơn 128-step shortcut — xác nhận shortcut conditioning giúp model sử dụng tốt hơn "bước nhảy lớn" trong trajectory
