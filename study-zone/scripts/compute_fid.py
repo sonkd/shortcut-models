@@ -1,10 +1,6 @@
 """
 compute_fid.py — Tính relative FID giữa các sample directories.
 
-Chỉ số Frechet Inception Distance (FID), hay viết tắt là FID, là một thước đo
-tính toán khoảng cách giữa các vectơ đặc trưng được tính toán cho hình ảnh
-thực và hình ảnh được tạo ra.
-
 Dùng pytorch-fid (có epsilon regularization, chạy trên CPU).
 
 Usage:
@@ -13,7 +9,7 @@ Usage:
         --samples_dir study-zone/samples \
         --ref celeba_128step_n504
 
-NOTE (TASK-04 · Option A):
+NOTE :
   "celeba_fm_baseline_128step" = Shortcut model với OOD conditioning (d=0),
   KHÔNG phải FM model thực sự. Dùng như ablation.
 """

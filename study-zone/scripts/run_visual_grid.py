@@ -1,5 +1,5 @@
 """
-run_visual_grid.py — Visual grid 4×4 với cùng noise seed (TASK-06)
+run_visual_grid.py — Visual grid 4×4 với cùng noise seed
 
 Grid: rows = NFE levels {1, 4, 16, 128}, cols = 4 mẫu (fixed initial noise)
 Dùng cho artifact taxonomy trong capstone.

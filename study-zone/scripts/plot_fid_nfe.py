@@ -8,13 +8,6 @@ Usage:
         --out study-zone/plots/fid_nfe_curve.png
 
 Output: study-zone/plots/fid_nfe_curve.png (Figure 1 trong capstone)
-
-NOTE (TASK-04 · Option A):
-  OOD baseline (force_dt0) được hiển thị riêng dưới nhãn
-  "Shortcut, OOD cond. d=0" — KHÔNG phải FM model thực sự.
-  Thesis phải có disclaimer: "This is not a trained FM model;
-  it is the shortcut model evaluated with out-of-distribution
-  conditioning (d=0), serving as an ablation of shortcut conditioning."
 """
 import json, argparse
 import numpy as np
